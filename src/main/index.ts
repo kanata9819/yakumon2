@@ -1,75 +1,152 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, desktopCapturer, screen } from 'electron'
 import { join } from 'path'
-import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { electronApp, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { AppState } from './state'
+import { initializeOCR, recognizeText, terminateOCR } from './ocr'
+import { translateText } from './translate'
 
-function createWindow(): void {
-    // Create the browser window.
-    const mainWindow = new BrowserWindow({
-        width: 900,
-        height: 670,
-        maximizable: true,
-        show: false,
-        autoHideMenuBar: true,
-        ...(process.platform === 'linux' ? { icon } : {}),
+let overlayWindow: BrowserWindow | null = null
+let controlWindow: BrowserWindow | null = null
+
+// ======== Window Creation ========
+
+function createOverlayWindow(): void {
+    const primaryDisplay = screen.getPrimaryDisplay()
+
+    overlayWindow = new BrowserWindow({
+        width: primaryDisplay.workAreaSize.width,
+        height: primaryDisplay.workAreaSize.height,
+        x: primaryDisplay.workArea.x,
+        y: primaryDisplay.workArea.y,
+        show: true,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
         webPreferences: {
             preload: join(__dirname, '../preload/index.js'),
             sandbox: false
         }
     })
 
-    mainWindow.on('ready-to-show', () => {
-        mainWindow.show()
+    // Make the window click-through
+    overlayWindow.setIgnoreMouseEvents(true)
+
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+        overlayWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    } else {
+        overlayWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    }
+}
+
+function createControlWindow(): void {
+    controlWindow = new BrowserWindow({
+        width: 400,
+        height: 600,
+        show: false,
+        autoHideMenuBar: true,
+        ...(process.platform === 'linux' ? { icon } : {}),
+        webPreferences: {
+            preload: join(__dirname, '../preload/index.js'),
+            // Use a different entry for the control panel in dev
+            // This requires a custom vite config, for now we load the same URL
+            // and use React Router to show a different component.
+            devTools: is.dev
+        }
     })
 
-    mainWindow.webContents.setWindowOpenHandler((details) => {
+    controlWindow.on('ready-to-show', () => {
+        controlWindow?.show()
+    })
+
+    controlWindow.webContents.setWindowOpenHandler((details) => {
         shell.openExternal(details.url)
         return { action: 'deny' }
     })
 
-    // HMR for renderer base on electron-vite cli.
-    // Load the remote URL for development or the local html file for production.
+    // We need a separate HTML file or a routing mechanism for the control panel.
+    // For now, we'll load the same URL as the overlay.
+    // The renderer-side code will need to differentiate.
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-        mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+        // This assumes you have a second vite entry for 'control.html'
+        // For simplicity, we will load the main URL and use routing in React.
+        controlWindow.loadURL(process.env['ELECTRON_RENDERER_URL'] + '#/control')
     } else {
-        mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+        // In production, you'd have a separate control.html file.
+        controlWindow.loadFile(join(__dirname, '../renderer/index.html'), { hash: 'control' })
     }
 }
 
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
-    // Set app user model id for windows
-    electronApp.setAppUserModelId('com.electron')
+// ======== IPC Handlers ========
 
-    // Default open or close DevTools by F12 in development
-    // and ignore CommandOrControl + R in production.
-    // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
-    app.on('browser-window-created', (_, window) => {
-        optimizer.watchWindowShortcuts(window)
-    })
-
-    // IPC test
-    ipcMain.on('ping', () => console.log('pong'))
-
-    createWindow()
-
-    app.on('activate', function () {
-        // On macOS it's common to re-create a window in the app when the
-        // dock icon is clicked and there are no other windows open.
-        if (BrowserWindow.getAllWindows().length === 0) createWindow()
+ipcMain.handle('get-screen-sources', async () => {
+    return desktopCapturer.getSources({
+        types: ['window', 'screen'],
+        thumbnailSize: { width: 300, height: 300 }
     })
 })
 
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
+ipcMain.on('start-capture', (_event, sourceId: string) => {
+    console.log(`[Main] Received start-capture for source: ${sourceId}`)
+    AppState.isCapturing = true
+    // Tell the overlay window to start capturing this source
+    overlayWindow?.webContents.send('start-capture', sourceId)
+})
+
+ipcMain.on('stop-capture', () => {
+    console.log('[Main] Received stop-capture')
+    AppState.isCapturing = false
+    overlayWindow?.webContents.send('stop-capture')
+})
+
+ipcMain.on('captured-image', async (_event, image_data_url: string) => {
+    if (!AppState.isCapturing) {
+        return
+    }
+
+    try {
+        const buffer = Buffer.from(image_data_url.replace(/^data:image\/png;base64,/, ''), 'base64')
+        const recognized = await recognizeText(buffer)
+
+        if (recognized.length > 0) {
+            const translated = await translateText(recognized)
+            // Send translated text to the overlay window to be displayed
+            overlayWindow?.webContents.send('translated-text', translated)
+        } else {
+            // Clear previous translations if nothing is detected
+            overlayWindow?.webContents.send('translated-text', [])
+        }
+    } catch (error) {
+        console.error('[Main] Error during capture processing:', error)
+    }
+})
+
+// ======== App Lifecycle ========
+
+app.whenReady().then(async () => {
+    electronApp.setAppUserModelId('com.electron.yakumon')
+
+    app.on('browser-window-created', () => {
+        // optimizer.watch(window)
+    })
+    await initializeOCR()
+    createOverlayWindow()
+    createControlWindow()
+
+    app.on('activate', function () {
+        if (BrowserWindow.getAllWindows().length === 0) {
+            createOverlayWindow()
+            createControlWindow()
+        }
+    })
+})
+
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit()
     }
 })
 
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and require them here.
+app.on('will-quit', async () => {
+    await terminateOCR()
+})
