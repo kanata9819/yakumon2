@@ -80,10 +80,21 @@ function createControlWindow(): void {
 // ======== IPC Handlers ========
 
 ipcMain.handle('get-screen-sources', async () => {
-    return desktopCapturer.getSources({
-        types: ['window', 'screen'],
-        thumbnailSize: { width: 300, height: 300 }
-    })
+    console.log('[Main] Attempting to get screen sources...') // Debug log
+    try {
+        const sources = await desktopCapturer.getSources({
+            types: ['window', 'screen'],
+            thumbnailSize: { width: 300, height: 300 }
+        })
+        console.log(
+            '[Main] Found screen sources:',
+            sources.map((s) => s.name)
+        ) // Debug log
+        return sources
+    } catch (error) {
+        console.error('[Main] Error getting screen sources:', error) // Error log
+        return []
+    }
 })
 
 ipcMain.on('start-capture', (_event, sourceId: string) => {
@@ -105,13 +116,18 @@ ipcMain.on('captured-image', async (_event, image_data_url: string) => {
     }
 
     try {
+        console.log('[Main] Received image data, processing...') // Debug log
         const buffer = Buffer.from(image_data_url.replace(/^data:image\/png;base64,/, ''), 'base64')
         const recognized = await recognizeText(buffer)
+        console.log('[Main] Recognized text:', recognized) // Debug log
 
         if (recognized.length > 0) {
             const translated = await translateText(recognized)
+            console.log('[Main] Translated text:', translated) // Debug log
+
             // Send translated text to the overlay window to be displayed
             overlayWindow?.webContents.send('translated-text', translated)
+            console.log('[Main] Sent translated text to overlay window.') // Debug log
         } else {
             // Clear previous translations if nothing is detected
             overlayWindow?.webContents.send('translated-text', [])

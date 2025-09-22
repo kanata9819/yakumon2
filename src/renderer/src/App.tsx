@@ -12,20 +12,26 @@ const App: React.FC = () => {
     useEffect(() => {
         // Listen for translated text from the main process
         const cleanupTranslatedText = window.api.onTranslatedText((texts) => {
+            console.log('[Renderer] Received translated-text:', texts) // Debug log
             setTranslatedTexts(texts)
         })
 
-        const handleStartCapture = (_event, sourceId: string): void => {
+        const handleStartCapture = (): void => {
             console.log('[Renderer] Received start-capture command')
-            startRendererCapture(sourceId).then((): void => {
-                if (captureInterval.current) clearInterval(captureInterval.current)
-                captureInterval.current = setInterval(() => {
-                    const frame = captureFrame()
-                    if (frame) {
-                        window.api.sendCapturedImage(frame)
-                    }
-                }, CAPTURE_INTERVAL_MS)
-            })
+            startRendererCapture()
+                .then((): void => {
+                    if (captureInterval.current) clearInterval(captureInterval.current)
+                    captureInterval.current = setInterval(() => {
+                        const frame = captureFrame()
+                        if (frame) {
+                            window.api.sendCapturedImage(frame)
+                        }
+                    }, CAPTURE_INTERVAL_MS)
+                })
+                .catch((error) => {
+                    console.error('[Renderer] Failed to start capture:', error)
+                    // Optionally, send an error back to the main process or display a user-friendly message
+                })
         }
 
         const handleStopCapture = (): void => {

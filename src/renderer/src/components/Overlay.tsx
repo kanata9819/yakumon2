@@ -15,19 +15,31 @@ const Overlay: React.FC<OverlayProps> = ({ item }) => {
         backgroundColor: 'rgba(0, 0, 0, 0.7)',
         color: 'white',
         display: 'flex',
+        flexDirection: 'column', // Arrange children vertically
         alignItems: 'center',
         justifyContent: 'center',
-        fontSize: '18px',
+        fontSize: '16px', // Adjusted font size
         border: '1px solid #333',
         overflow: 'hidden',
-        whiteSpace: 'nowrap',
-        textOverflow: 'ellipsis',
-        padding: '2px',
+        padding: '4px',
         boxSizing: 'border-box',
-        pointerEvents: 'none'
+        pointerEvents: 'none',
+        textAlign: 'center'
     }
 
-    return <div style={style}>{item.translated}</div>
+    const textStyle: React.CSSProperties = {
+        width: '100%',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+    }
+
+    return (
+        <div style={style}>
+            <div style={{ ...textStyle, opacity: 0.7, fontSize: '12px' }}>{item.text}</div>
+            <div style={textStyle}>{item.translated}</div>
+        </div>
+    )
 }
 
 export default Overlay

@@ -7,19 +7,38 @@ const ControlPanel: React.FC = () => {
     const [isCapturing, setIsCapturing] = useState(false)
 
     useEffect(() => {
-        window.api.getScreenSources().then((sources) => {
-            setSources(sources)
-            if (sources.length > 0) {
-                setSelectedSourceId(sources[0].id)
-            }
-        })
+        console.log('[ControlPanel] useEffect hook executed.') // Debug log
+        window.api
+            .getScreenSources()
+            .then((sources) => {
+                console.log(
+                    '[ControlPanel] Received screen sources:',
+                    sources.map((s) => s.name)
+                ) // Debug log
+                setSources(sources)
+                if (sources.length > 0 && sources[0].id) {
+                    setSelectedSourceId(sources[0].id)
+                } else {
+                    setSelectedSourceId(null)
+                }
+            })
+            .catch((error) => {
+                console.error('[ControlPanel] Error fetching screen sources:', error) // Error log
+                setSelectedSourceId(null)
+            })
     }, [])
 
     const handleStart = (): void => {
-        if (selectedSourceId) {
+        console.log('ControlPanel: handleStart called. selectedSourceId:', selectedSourceId) // New debug log
+        if (selectedSourceId && selectedSourceId.trim() !== '') {
+            // More robust check
             console.log('ControlPanel: Starting capture for', selectedSourceId)
             window.api.startCapture(selectedSourceId)
             setIsCapturing(true)
+        } else {
+            console.warn(
+                'ControlPanel: Cannot start capture, selectedSourceId is null, undefined, or empty.'
+            ) // New warning
         }
     }
 
@@ -39,8 +58,12 @@ const ControlPanel: React.FC = () => {
                 value={selectedSourceId || ''}
                 onChange={(e): void => setSelectedSourceId(e.target.value)}
                 style={{ width: '100%', padding: '8px', marginBottom: '10px' }}
-                disabled={isCapturing}
+                disabled={!selectedSourceId || isCapturing}
             >
+                {/* Add an empty option for when no source is selected or available */}
+                <option value="" disabled>
+                    {sources.length > 0 ? 'Select a source' : 'No sources available'}
+                </option>
                 {sources.map((source) => (
                     <option key={source.id} value={source.id}>
                         {source.name}
